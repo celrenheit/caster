@@ -17,7 +17,7 @@ import (
 func Example() {
 	wg := new(sync.WaitGroup)
 
-	c := caster.New(nil)
+	c := caster.New[int](nil)
 
 	// register subscribers
 	for i := 0; i < 5; i++ {
@@ -43,7 +43,7 @@ func Example() {
 	// received 100 messages
 }
 
-func receiveFromChannel(ch chan interface{}, wg *sync.WaitGroup) {
+func receiveFromChannel(ch chan int, wg *sync.WaitGroup) {
 	wg.Add(1)
 
 	counter := 0

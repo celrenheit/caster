@@ -18,7 +18,7 @@ func TestCaster_PubSub(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
-	c := New(ctx)
+	c := New[int](ctx)
 
 	go func() {
 		ch, _ := c.Sub(nil, 0)
@@ -72,7 +72,7 @@ func TestCaster_PubSub(t *testing.T) {
 
 	time.Sleep(10 * time.Millisecond)
 
-	ok := c.Pub("test")
+	ok := c.Pub(42)
 	if ok {
 		t.Fatalf("`Pub` should not be ok after `Close`")
 	}

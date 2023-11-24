@@ -22,37 +22,43 @@ const (
 	opClose
 )
 
-type operation struct {
+type operation[T any] struct {
 	operator operator
-	operand  interface{}
+	operand  operandInfo[T]
 }
 
-type subInfo struct {
-	ch  chan interface{}
+type operandInfo[T any] struct {
+	pub   T
+	sub   subInfo[T]
+	unSub chan T
+}
+
+type subInfo[T any] struct {
+	ch  chan T
 	ctx context.Context
 }
 
 // Caster represents a message broadcaster
-type Caster struct {
+type Caster[T any] struct {
 	done chan struct{}
-	op   chan operation
+	op   chan operation[T]
 }
 
 // New creates a new caster
-func New(ctx context.Context) *Caster {
+func New[T any](ctx context.Context) *Caster[T] {
 	if ctx == nil {
 		ctx = context.Background()
 	}
 
-	c := &Caster{
+	c := &Caster[T]{
 		done: make(chan struct{}),
-		op:   make(chan operation),
+		op:   make(chan operation[T]),
 	}
 
 	go func() {
-		subs := map[chan interface{}]context.Context{}
+		subs := map[chan T]context.Context{}
 
-		checkCtx := func(sCh chan interface{}, sCtx context.Context) bool {
+		checkCtx := func(sCh chan T, sCtx context.Context) bool {
 			select {
 			case <-sCtx.Done():
 				delete(subs, sCh)
@@ -77,7 +83,7 @@ func New(ctx context.Context) *Caster {
 						}
 
 						select {
-						case sCh <- o.operand:
+						case sCh <- o.operand.pub:
 						}
 					}
 				case opTryPub:
@@ -87,15 +93,15 @@ func New(ctx context.Context) *Caster {
 						}
 
 						select {
-						case sCh <- o.operand:
+						case sCh <- o.operand.pub:
 						default:
 						}
 					}
 				case opSub:
-					sIn := o.operand.(subInfo)
+					sIn := o.operand.sub
 					subs[sIn.ch] = sIn.ctx
 				case opUnsub:
-					sCh := o.operand.(chan interface{})
+					sCh := o.operand.unSub
 					delete(subs, sCh)
 					close(sCh)
 				case opClose:
@@ -115,18 +121,18 @@ func New(ctx context.Context) *Caster {
 }
 
 // Done returns a done channel that is closed when current caster is closed
-func (c *Caster) Done() <-chan struct{} {
+func (c *Caster[T]) Done() <-chan struct{} {
 	return c.done
 }
 
 // Close closes current caster and all subscriber channels. Ok value indicates whether the operation
 // is performed or not. When current caster is closed, it stops receiving further operations and the
 // operation won't be performed.
-func (c *Caster) Close() (ok bool) {
+func (c *Caster[T]) Close() (ok bool) {
 	select {
 	case <-c.done:
 		return false
-	case c.op <- operation{
+	case c.op <- operation[T]{
 		operator: opClose,
 	}:
 		return true
@@ -138,23 +144,25 @@ func (c *Caster) Close() (ok bool) {
 // will unsubscribe the subscriber channel and close it. Ok value indicates whether the operation is
 // performed or not. When current caster is closed, it stops receiving further operations and the
 // operation won't be performed. A closed receiver channel will be returned if ok is false.
-func (c *Caster) Sub(ctx context.Context, capacity uint) (sCh chan interface{}, ok bool) {
+func (c *Caster[T]) Sub(ctx context.Context, capacity uint) (sCh chan T, ok bool) {
 	if ctx == nil {
 		ctx = context.Background()
 	}
 
-	sCh = make(chan interface{}, capacity)
+	sCh = make(chan T, capacity)
 
 	select {
 	case <-ctx.Done():
 		close(sCh)
 	case <-c.done:
 		close(sCh)
-	case c.op <- operation{
+	case c.op <- operation[T]{
 		operator: opSub,
-		operand: subInfo{
-			ch:  sCh,
-			ctx: ctx,
+		operand: operandInfo[T]{
+			sub: subInfo[T]{
+				ch:  sCh,
+				ctx: ctx,
+			},
 		},
 	}:
 	}
@@ -166,13 +174,15 @@ func (c *Caster) Sub(ctx context.Context, capacity uint) (sCh chan interface{}, 
 // Unsub unsubscribes the given subscriber channel from current caster and closes it. Ok value
 // indicates whether the operation is performed or not. When current caster is closed, it stops
 // receiving further operations and the operation won't be performed.
-func (c *Caster) Unsub(subCh chan interface{}) (ok bool) {
+func (c *Caster[T]) Unsub(subCh chan T) (ok bool) {
 	select {
 	case <-c.done:
 		return false
-	case c.op <- operation{
+	case c.op <- operation[T]{
 		operator: opUnsub,
-		operand:  subCh,
+		operand: operandInfo[T]{
+			unSub: subCh,
+		},
 	}:
 		return true
 	}
@@ -182,13 +192,15 @@ func (c *Caster) Unsub(subCh chan interface{}) (ok bool) {
 // to all subscriber channels. Ok value indicates whether the operation is performed or not. When
 // current caster is closed, it stops receiving further operations and the operation won't be
 // performed.
-func (c *Caster) Pub(msg interface{}) (ok bool) {
+func (c *Caster[T]) Pub(msg T) (ok bool) {
 	select {
 	case <-c.done:
 		return false
-	case c.op <- operation{
+	case c.op <- operation[T]{
 		operator: opPub,
-		operand:  msg,
+		operand: operandInfo[T]{
+			pub: msg,
+		},
 	}:
 		return true
 	}
@@ -198,13 +210,15 @@ func (c *Caster) Pub(msg interface{}) (ok bool) {
 // message to all subscriber channels without blocking on waiting for channels to be ready for
 // receiving. Ok value indicates whether the operation is performed or not. When current caster is
 // closed, it stops receiving further operations and the operation won't be performed.
-func (c *Caster) TryPub(msg interface{}) (ok bool) {
+func (c *Caster[T]) TryPub(msg T) (ok bool) {
 	select {
 	case <-c.done:
 		return false
-	case c.op <- operation{
+	case c.op <- operation[T]{
 		operator: opTryPub,
-		operand:  msg,
+		operand: operandInfo[T]{
+			pub: msg,
+		},
 	}:
 		return true
 	}
