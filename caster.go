@@ -25,6 +25,7 @@ const (
 type operation[T any] struct {
 	operator operator
 	operand  operandInfo[T]
+	okCh     chan bool
 }
 
 type operandInfo[T any] struct {
@@ -87,6 +88,10 @@ func New[T any](ctx context.Context) *Caster[T] {
 						}
 					}
 				case opTryPub:
+					var (
+						l    = len(subs)
+						sent int
+					)
 					for sCh, sCtx := range subs {
 						if !checkCtx(sCh, sCtx) {
 							continue
@@ -94,8 +99,13 @@ func New[T any](ctx context.Context) *Caster[T] {
 
 						select {
 						case sCh <- o.operand.pub:
+							sent++
 						default:
 						}
+					}
+
+					if o.okCh != nil {
+						o.okCh <- sent == l
 					}
 				case opSub:
 					sIn := o.operand.sub
@@ -211,6 +221,8 @@ func (c *Caster[T]) Pub(msg T) (ok bool) {
 // receiving. Ok value indicates whether the operation is performed or not. When current caster is
 // closed, it stops receiving further operations and the operation won't be performed.
 func (c *Caster[T]) TryPub(msg T) (ok bool) {
+	okCh := make(chan bool, 1)
+
 	select {
 	case <-c.done:
 		return false
@@ -219,7 +231,13 @@ func (c *Caster[T]) TryPub(msg T) (ok bool) {
 		operand: operandInfo[T]{
 			pub: msg,
 		},
+		okCh: okCh,
 	}:
-		return true
+		select {
+		case ok := <-okCh:
+			return ok
+		case <-c.done:
+			return false
+		}
 	}
 }
